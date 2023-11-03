@@ -1,0 +1,164 @@
+#!/bin/bash
+usage="Tiled-ClickSeq Batch Script
+        Written by Andrew Routh 2020-2023
+
+USAGE: ./TCS_batch [OPTIONS] FILE PRIMER
+
+e.g. ./TCS_batch /path/to/data/mydata_R1.fastq Virus_primers.BED
+
+Required Arguments:
+    File	Enter full path of R1 file
+    Primer	(BED file of primers)
+
+Optional Arguments:
+    -h show this help text
+
+    -p Perform custom stages; select combination of P, M, R, C, D. No whitespace, e.g. 'PM'.
+            (default = PM: Preprocess and map)
+        P Only perform data preprocessing
+        M Only default data mapping
+	Q Map all Split files to find primer targets
+        S Perform Strict data processing, mapping and reconstruction
+        V Do ViReMa mapping
+        T Do Minority variant calling using PARCL script
+	C Clean/Remove temporary/previous files and directories (SplitFASTQ folder and bowtie2 mappings to pre-concensus genome)
+
+    -t set threads (default: 1)
+
+    -g provide base genome
+
+    -m provide metadata file with root vs genome names
+    "
+
+GENOME='NC_045512.2.fasta'
+STAGING='PM'
+METADATA=''
+while getopts 'hp:t:g:m:' option; do
+  case "$option" in
+    h ) echo "$usage"
+       exit
+       ;;
+    p ) STAGING=$OPTARG
+       ;;
+    t ) Threads=$OPTARG
+       ;;
+    g ) GENOME=$OPTARG
+       ;;
+    m ) METADATA=$OPTARG
+       ;;
+
+   \? ) printf "unrecognised option: -%s\n" "$OPTARG" >&2
+       echo "$usage" >&2
+       exit 1
+       ;;
+  esac
+done
+shift $((OPTIND -1))
+
+##REQUIRED INPUT
+File=$1
+Primers=$2
+DirRoot=${File%%_R1_001.fastq.gz*}
+Root=${DirRoot##*/}
+WKDIR=$0
+ScriptPath=${WKDIR%/*}'/Scripts/'
+echo $File
+echo $DirRoot
+echo $Root
+
+if [[ "$STAGING" == *"P"* ]]; then
+	##First trimming/quality filter
+	fastp -i $DirRoot'_R1_001.fastq.gz' -I $DirRoot'_R2_001.fastq.gz' -o $Root'_R1_trim.fastq.gz' -O $Root'_R2_trim.fastq.gz' -a AGATCGGAAGAGCACACGTCTGAACTCCAGTCAC -l 30 -w $Threads -z 3 -U --umi_loc read1 --umi_len 12 --umi_prefix umi --unpaired1 $Root'_R1only_trim.fastq'
+	fastx_trimmer -Q33 -t 30 -m 30 -i $Root'_R1only_trim.fastq' -o $Root'_R1only_trim2.fastq'
+
+	##Split reads based on primer in R2 reads
+	mkdir $Root'_SplitFASTQ'
+	pypy3 $ScriptPath'FASTQ_R1_Split_from_primersBED_16Sep20.py' $Root'_R1_trim.fastq.gz' $Root'_R2_trim.fastq.gz' $2 $Root'_SplitFASTQ'
+
+	cd $Root'_SplitFASTQ'
+	for i in T*fastq; do 
+		j=${i%.*}; k=${j#*.} 
+		cutadapt -j $Threads -a $k -m 50 --match-read-wildcards -n 5 -o $j'.trim.fastq' $i >> log.txt
+	done
+
+	fastx_trimmer -Q33 -t 30 -m 30 -i unknownprimer.NNN.fastq -o unknownprimer.NNN.trim.fastq
+	cat T*.trim.fastq unknownprimer.NNN.trim.fastq '../'$Root'_R1only_trim2.fastq' > $Root'_prepped_R1data.txt'
+	gzip T*fastq
+	gzip $Root'_prepped_R1data.txt'
+	cd ../
+	rm $Root'_R1_trim.fastq.gz' $Root'_R2_trim.fastq.gz'
+	rm $Root'_R1only_trim.fastq' $Root'_R1only_trim2.fastq'
+	mv $Root'_SplitFASTQ/'$Root'_prepped_R1data.txt.gz' ./
+fi
+
+if [[ "$STAGING" == *"M"* ]]; then
+	##First mapping and genome correction
+	bowtie2-build $GENOME $GENOME
+	bowtie2 -p $Threads -x $GENOME -U $Root'_prepped_R1data.txt.gz' | samtools view -buSh - | samtools sort -@ $Threads - -o $Root'_bwt2.bam'
+	samtools index $Root'_bwt2.bam'
+	pilon --threads $Threads --fix bases --genome $GENOME --flank 1 --mindepth 25 --unpaired $Root'_bwt2.bam' --vcf --changes --output $Root --outdir $Root'_pilon'
+	grep PASS $Root'_pilon/'$Root'.vcf' | awk '{OFS=""}{if($5 ~ /[A,T,G,C]/)print $4, $2, $5}' > $Root'.changes.txt'
+	bowtie2-build $Root'_pilon/'$Root'.fasta' $Root'_pilon/'$Root'.fasta'
+	bowtie2 -p $Threads -x $Root'_pilon/'$Root'.fasta' -U $Root'_prepped_R1data.txt.gz' | samtools view -buSh - | samtools sort -@ $Threads - -o $Root'_fixed_bwt2.bam'
+	samtools index $Root'_fixed_bwt2.bam'
+	genomeCoverageBed -split -bga -ibam $Root'_fixed_bwt2.bam' > $Root'_fixed_bwt2-coverage.bedgraph'
+	if [[ "$METADATA" == *"tx"* ]]; then 
+		python3 $ScriptPath'Mask_Genome.py' $Root'_pilon/'$Root'.fasta' $Root'_fixed_bwt2-coverage.bedgraph' $Root'_pilon/'$Root'_masked.fasta' --MetaDataFile $METADATA
+	else
+		python3 $ScriptPath'Mask_Genome.py' $Root'_pilon/'$Root'.fasta' $Root'_fixed_bwt2-coverage.bedgraph' $Root'_pilon/'$Root'_masked.fasta'
+	fi
+fi
+
+if [[ "$STAGING" == *"B"* ]]; then
+	##Error-calling on bowtie2 data
+	umi_tools dedup -I $Root'_fixed_bwt2.bam' -S $Root'_fixed_bwt2_dedup.bam'
+	samtools index $Root'_fixed_bwt2_dedup.bam' 
+	samtools mpileup -f $Root'_pilon/'$Root'.fasta' -d 1000000 $Root'_fixed_bwt2_dedup.bam' | grep NC_0455 > $Root'_fixed_bwt2_dedup.pileup.txt' 
+	gzip $Root'_fixed_bwt2_dedup.pileup.txt'
+	python3 $ScriptPath'Mismatches_Qual-filter_Jan2021_fixed.py' $Root'_fixed_bwt2_dedup.pileup.txt.gz' $Root'_fixed_bwt2_dedup.pileup.ERs-20.txt' 20
+fi
+
+if [[ "$STAGING" == *"Q"* ]]; then
+        ##Map all Split FASTQs to find virus/host mapping rates
+        cd $Root'_SplitFASTQ'
+        for i in $(ls *trim.fastq.gz); do
+                bowtie2 -p $Threads -x '../'$GENOME -U $i --un $i'_mV.txt'| samtools view -buSh - | samtools sort -@ $Threads - -o $i'_bwt2-V.bam'
+                samtools index $i'_bwt2-V.bam'
+                samtools idxstats $i'_bwt2-V.bam' > $Root'_'$i'_bwt2-V.bam.stats.txt'
+                hisat2 --mm -p $Threads -x /data2/Indexes/HISAT2/hg19/genome -U $i'_mV.txt' | samtools view -buSh - | samtools sort -@ $Threads - -o $i'_ht2-hg.bam'
+                samtools index $i'_ht2-hg.bam'
+                samtools idxstats $i'_ht2-hg.bam' > $Root'_'$i'_ht2-hg.bam.stats.txt'
+        done
+        #for i in $(ls *trim.fastq.gz); do
+        #        hisat2 --mm -p $Threads -x /data2/Indexes/HISAT2/hg19/genome -U $i | samtools view -F 4 -buSh - | samtools sort -@ $Threads - -o $i'_ht2-hg.bam'
+        #        samtools index $i'_ht2-hg.bam'
+        #        samtools idxstats $i'_ht2-hg.bam' > $i'_ht2-hg.bam.stats.txt'
+        #done
+        cd ../
+fi
+
+
+if [[ "$STAGING" == *"S"* ]]; then
+	###Strict mapping and genome correction
+	mkdir $Root'_strict'	
+	fastp -i $Root'_prepped_R1data.txt.gz' -o $Root'_prepped2_R1data.txt.gz' -a AGATCGGAAGAGCACACGTCTGAACTCCAGTCAC -l 30 -w $Threads -z 3 -r -W 3 -M 30 -f 3
+	bowtie2 -p $Threads -x $GENOME -U $Root'_prepped2_R1data.txt.gz' | samtools view -buSh - | samtools sort -@ $Threads - -o $Root'_strict/'$Root'_bwt2.bam'
+	samtools index $Root'_strict/'$Root'_bwt2.bam'
+	umi_tools dedup --unmapped-reads discard -I $Root'_strict/'$Root'_bwt2.bam' -S $Root'_strict/'$Root'_bwt2_dedup.bam'
+	samtools index $Root'_strict/'$Root'_bwt2_dedup.bam'
+	##Genome correction with strict-filtered data likely to have (lower coverage)
+	pilon --threads $Threads --fix bases --genome $GENOME --mindepth 10 --flank 2 --unpaired $Root'_strict/'$Root'_bwt2_WA1_dedup.bam' --vcf --changes --output $Root --outdir $Root'_strict/'$Root'_strict_pilon'
+	grep PASS $Root'_strict/'$Root'_strict_pilon/'$Root'.vcf' | awk '{OFS=""}{if($5 ~ /[A,T,G,C]/)print $4, $2, $5}' > $Root'_strict/'$Root'.strict_changes.txt'
+fi
+
+if [[ "$STAGING" == *"V"* ]]; then
+	python3 $ScriptPath'ViReMa_0.28/ViReMa.py' $Root'_pilon/'$Root'.fasta' $Root'_prepped_R1data.txt.gz' $Root'_ViReMa.sam' --ErrorDensity 2,30 --Seed 25 --Output_Dir $Root'_ViReMa_ED' --Defuzz 0 --p $Threads --Chunk 10000000 -BED12 --X 3 -Overwrite --Chunk 10000000 --Output_Tag $Root
+        python3 $ScriptPath'Plot_CS_Freq.py' $Root'_ViReMa_ED/'$Root'_ViReMa' $Root'_ViReMa_ED/BED_Files/'$Root'_Virus_Recombination_Results.bed' $Root'_pilon/'$Root'.fasta' --MicroInDel_Length 25 -CoVData -Ends
+	#gzip $Root'_ViReMa_ED/'$Root'_ViReMa.sam'
+fi
+
+if [[ "$STAGING" == *"C"* ]]; then
+	rm -r $Root'_SplitFASTQ'
+	rm $Root'_bwt2.bam' $Root'_bwt2.bam.bai'
+fi
+
