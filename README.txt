@@ -1,5 +1,5 @@
-TCS: Tiled-ClickSeq batch scripts
-Last Modified: Oct-23
+TCS: Tiled-ClickSeq batch scripts v0.2
+Last Modified: Nov-23
 
 
 Tiled Batch
@@ -24,11 +24,12 @@ Optional Arguments:
         S Perform Strict data processing, mapping and reconstruction
         V Do ViReMa mapping
         T Do Minority variant calling using PARCL script
-        C Clean/Remove temporary/previous files and directories (SplitFASTQ folder and bowtie2 mappings to pre-concensus genome)
 
     -t set threads (default: 1)
 
     -g provide base genome
+
+    -i provide HISAT2 index of host/off-target genome
 
     -m provide metadata file with root vs genome names
 
@@ -37,7 +38,7 @@ Optional Arguments:
 
 Requirements:
 
-bowtie
+bowtie v1.3.1
 bowtie2
 samtools
 fastp
