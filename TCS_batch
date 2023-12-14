@@ -27,13 +27,16 @@ Optional Arguments:
 
     -g provide base genome
 
+    -i provide HISAT2 index of host/off-target genome
+
     -m provide metadata file with root vs genome names
     "
 
 GENOME='NC_045512.2.fasta'
 STAGING='PM'
 METADATA=''
-while getopts 'hp:t:g:m:' option; do
+HOST=''
+while getopts 'hp:t:g:m:i:' option; do
   case "$option" in
     h ) echo "$usage"
        exit
@@ -45,6 +48,8 @@ while getopts 'hp:t:g:m:' option; do
     g ) GENOME=$OPTARG
        ;;
     m ) METADATA=$OPTARG
+       ;;
+    i ) HOST=$OPTARG
        ;;
 
    \? ) printf "unrecognised option: -%s\n" "$OPTARG" >&2
@@ -122,18 +127,20 @@ if [[ "$STAGING" == *"Q"* ]]; then
         ##Map all Split FASTQs to find virus/host mapping rates
         cd $Root'_SplitFASTQ'
         for i in $(ls *trim.fastq.gz); do
-                bowtie2 -p $Threads -x '../'$GENOME -U $i --un $i'_mV.txt'| samtools view -buSh - | samtools sort -@ $Threads - -o $i'_bwt2-V.bam'
-                samtools index $i'_bwt2-V.bam'
-                samtools idxstats $i'_bwt2-V.bam' > $Root'_'$i'_bwt2-V.bam.stats.txt'
-                hisat2 --mm -p $Threads -x /data2/Indexes/HISAT2/hg19/genome -U $i'_mV.txt' | samtools view -buSh - | samtools sort -@ $Threads - -o $i'_ht2-hg.bam'
-                samtools index $i'_ht2-hg.bam'
-                samtools idxstats $i'_ht2-hg.bam' > $Root'_'$i'_ht2-hg.bam.stats.txt'
-        done
-        #for i in $(ls *trim.fastq.gz); do
-        #        hisat2 --mm -p $Threads -x /data2/Indexes/HISAT2/hg19/genome -U $i | samtools view -F 4 -buSh - | samtools sort -@ $Threads - -o $i'_ht2-hg.bam'
-        #        samtools index $i'_ht2-hg.bam'
-        #        samtools idxstats $i'_ht2-hg.bam' > $i'_ht2-hg.bam.stats.txt'
-        #done
+		j=${i%%.trim.fastq.gz}
+                bowtie2 -p $Threads -x '../'$GENOME -U $i --un $j'_mV.txt'| samtools view -buSh - | samtools sort -@ $Threads - -o $j'_bwt2-V.bam'
+                samtools index $j'_bwt2-V.bam'
+                samtools idxstats $j'_bwt2-V.bam' > $Root'_'$j'_bwt2-V.bam.stats.txt'
+                hisat2 --mm -p $Threads -x $HOST -U $j'_mV.txt' | samtools view -buSh - | samtools sort -@ $Threads - -o $j'_ht2-host.bam'
+                samtools index $j'_ht2-host.bam'
+                samtools idxstats $j'_ht2-host.bam' > $Root'_'$j'_ht2-host.bam.stats.txt'
+		VCOUNT=$(awk '{s+=$3} END {print s}' $Root'_'$j'_bwt2-V.bam.stats.txt')
+		HCOUNT=$(awk '{s+=$3} END {print s}' $Root'_'$j'_ht2-host.bam.stats.txt')
+		NOCOUNT=$(awk '{s+=$4} END {print s}' $Root'_'$j'_ht2-host.bam.stats.txt')
+		echo $j $VCOUNT $HCOUNT $NOCOUNT >> $Root'_counts.log.txt'
+		rm $j'_mV.txt' $j'_bwt2-V.bam' $j'_ht2-host.bam'
+	done
+
         cd ../
 fi
 
