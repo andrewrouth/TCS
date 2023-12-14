@@ -51,7 +51,7 @@ with open(Coverage, 'r') as In:
         data = data.split()
         Start = int(data[1])
         Stop = int(data[2])
-        Cov = int(data[3])
+        Cov = float(data[3])
         if Cov < MinCount:
             Output[Start:Stop] = 'N'
         else:
@@ -65,8 +65,6 @@ Completeness = round((Completeness*100),1)
 Output = wrap(Output,60)
 Output = '\n'.join(Output)
 
-
-
 if args.MetaDataFile:
     Root = InputGenome.split('.fasta')[0]
     Dir, Root = Root.split("/")
@@ -77,6 +75,3 @@ else:
 
 Out = open(OutputGenome, 'w')
 Out.write(Header + '\n' + Output + '\n')
-
-
-        
