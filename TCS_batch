@@ -159,9 +159,9 @@ if [[ "$STAGING" == *"S"* ]]; then
 fi
 
 if [[ "$STAGING" == *"V"* ]]; then
-	#python3 $ScriptPath'ViReMa_0.28/ViReMa.py' $Root'_pilon/'$Root'.fasta' $Root'_prepped_R1data.txt.gz' $Root'_ViReMa.sam' --ErrorDensity 2,30 --Seed 25 --Output_Dir $Root'_ViReMa_ED' --Defuzz 0 --p $Threads --Chunk 10000000 -BED12 --X 3 -Overwrite --Chunk 10000000 --Output_Tag $Root
-        python3 $ScriptPath'Plot_CS_Freq.py' $Root'_ViReMa_ED/'$Root'_ViReMa' $Root'_ViReMa_ED/BED_Files/'$Root'_Virus_Recombination_Results.bed' $Root'_pilon/'$Root'.fasta' --MicroInDel_Length 25 -CoVData -Ends
-	python3 $ScriptPath'Transpose_Genome_Coords_to_WA1_TCS.py' $Root'.changes.txt' $Root'_ViReMa_ED/'$Root'_ViReMa_normalised.bed' $Root'_ViReMa_ED/'$Root'_ViReMa_normalised-WA1coords.bed'	
+	python3 $ScriptPath'ViReMa_0.28/ViReMa.py' $Root'_pilon/'$Root'.fasta' $Root'_prepped_R1data.txt.gz' $Root'_ViReMa.sam' --ErrorDensity 2,30 --Seed 25 --Output_Dir $Root'_ViReMa_ED' --Defuzz 0 --p $Threads --Chunk 10000000 -BED12 --X 3 -Overwrite --Chunk 10000000 --Output_Tag $Root
+        #python3 $ScriptPath'Plot_CS_Freq.py' $Root'_ViReMa_ED/'$Root'_ViReMa' $Root'_ViReMa_ED/BED_Files/'$Root'_Virus_Recombination_Results.bed' $Root'_pilon/'$Root'.fasta' --MicroInDel_Length 25 -CoVData -Ends
+	#python3 $ScriptPath'Transpose_Genome_Coords_to_WA1_TCS.py' $Root'.changes.txt' $Root'_ViReMa_ED/'$Root'_ViReMa_normalised.bed' $Root'_ViReMa_ED/'$Root'_ViReMa_normalised-WA1coords.bed'	
 #gzip $Root'_ViReMa_ED/'$Root'_ViReMa.sam'
 fi
 
